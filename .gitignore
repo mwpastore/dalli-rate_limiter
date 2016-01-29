@@ -9,3 +9,4 @@
 /tmp/
 .rbenv-vars
 .ruby-version
+.rubocop-http*yml

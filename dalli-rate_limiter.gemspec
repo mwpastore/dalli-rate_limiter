@@ -9,7 +9,7 @@ Gem::Specification.new do |spec|
   spec.authors       = ["Mike Pastore"]
   spec.email         = ["mike@oobak.org"]
 
-  spec.summary       = "Arbitrary memcached-backed rate limiting for Ruby"
+  spec.summary       = "Arbitrary Memcached-backed rate limiting for Ruby"
   spec.description   = spec.summary
   spec.homepage      = "https://github.com/mwpastore/dalli-rate_limiter"
   spec.license       = "MIT"
@@ -26,6 +26,7 @@ Gem::Specification.new do |spec|
 
   spec.add_development_dependency "bundler", "~> 1.11.0"
   spec.add_development_dependency "rake", "~> 10.5.0"
+  spec.add_development_dependency "rubocop", "~> 0.35.0"
   spec.add_development_dependency "rspec", "~> 3.4.0"
   spec.add_development_dependency "rspec-given", "~> 3.8.0"
 end

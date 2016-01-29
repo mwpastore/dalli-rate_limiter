@@ -1,0 +1,36 @@
+inherit_from:
+  - http://relaxed.ruby.style/rubocop.yml
+
+AllCops:
+  Exclude:
+    - "**/spec_helper.rb"
+    - "**/*_spec.rb"
+    - "lib/dalli-rate_limiter.rb"
+
+# It's more consistent to use the old style everywhere. If anything, I want to
+# disable the new style!
+Style/HashSyntax:
+  Enabled: false
+
+# I find it clearer to continue multiline operations with leading periods.
+# English reads left-to-right; we don't look at the ends of lines to see if
+# they continue on the next.
+Style/MultilineOperationIndentation:
+  Enabled: false
+
+# I'm not entirely opposed to this but it's going to add a ton of lines to the
+# code base...
+Style/AlignParameters:
+  Enabled: false
+
+# What, and indent this entire file another stop? No way!
+Style/ClassAndModuleChildren:
+  Enabled: false
+
+# Umm, no, commented code should have no leading space.
+Style/LeadingCommentSpace:
+  Enabled: false
+
+# WHY IS THIS FEATURE DISCOURAGED IF I WANTED TO WRITE JAVA I WOULD WRITE JAVA
+Style/UnlessElse:
+  Enabled: false
