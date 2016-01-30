@@ -1,4 +1,4 @@
-# Dalli::RateLimiter
+# Dalli::RateLimiter [![Build Status](https://travis-ci.org/mwpastore/dalli-rate_limiter.svg?branch=master)](https://travis-ci.org/mwpastore/dalli-rate_limiter)
 
 **Dalli::RateLimiter** provides arbitrary [Memcached][6]-backed rate limiting
 for your Ruby applications. You may be using an application-level rate limiter
@@ -129,6 +129,14 @@ def add_widgets(foo_id, some_widgets)
 end
 ```
 
+## Compatibility
+
+**Dalli::RateLimiter** is compatible with Ruby 1.9.3 and greater and has been
+tested with frozen string literals under Ruby 2.3.0.
+
+You might consider installing the [kgio][7] gem to [give Dalli a 10-20%
+performance boost][8].
+
 ## Caveats
 
 A rate-limiting system is only as good as its backing store, and it should be
@@ -181,3 +189,5 @@ License](http://opensource.org/licenses/MIT).
 [4]: https://github.com/petergoldstein/dalli "Dalli"
 [5]: https://github.com/mperham/connection_pool "ConnectionPool"
 [6]: http://memcached.org "Memcached"
+[7]: http://bogomips.org/kgio "kgio"
+[8]: https://github.com/petergoldstein/dalli/blob/master/Performance.md "Dalli Performance"
