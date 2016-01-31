@@ -28,17 +28,17 @@ module Dalli
     def exceeded?(unique_key, to_consume = 1)
       to_consume = to_ems(to_consume)
 
+      return -1 if to_consume > @max_requests
+
       timestamp_key = format_key(unique_key, "timestamp")
       allowance_key = format_key(unique_key, "allowance")
 
       @dalli.with do |dc|
-        if to_consume <= @max_requests
-          if dc.add(allowance_key, @max_requests - to_consume, @period, :raw => true)
-            # Short-circuit the simple case of seeing the key for the first time.
-            dc.set(timestamp_key, to_ems(Time.now.to_f), @period, :raw => true)
+        if dc.add(allowance_key, @max_requests - to_consume, @period, :raw => true)
+          # Short-circuit the simple case of seeing the key for the first time.
+          dc.set(timestamp_key, to_ems(Time.now.to_f), @period, :raw => true)
 
-            return nil
-          end
+          return nil
         end
 
         lock = acquire_lock(dc, unique_key) if @locking

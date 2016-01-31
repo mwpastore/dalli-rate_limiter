@@ -37,6 +37,6 @@ describe Dalli::RateLimiter do
   context "with too many requests" do
     When(:result) { lim.exceeded? "test_key_5", lim.max_requests + 1 }
 
-    Then { result && result > 0 }
+    Then { result && result < 0 }
   end
 end

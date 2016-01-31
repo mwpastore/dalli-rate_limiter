@@ -48,17 +48,19 @@ Or install it yourself as:
 ## Basic Usage
 
 ```ruby
-lim = Dalli::RateLimiter.new
+def do_foo
+  lim = Dalli::RateLimiter.new
 
-if lim.exceeded? "foo"
-  fail "Sorry, can't foo right now. Try again later!"
-else
+  if lim.exceeded? "foo"
+    fail "Sorry, can't foo right now. Try again later!"
+  end
+
   # ..
 end
 ```
 
-**Dalli::RateLimiter** will, by default, create a ConnectionPool with the
-default options, using a block that yields Dalli::Client instances with the
+**Dalli::RateLimiter** will, by default, create a ConnectionPool with its
+default options, using a block that yields Dalli::Client instances with its
 default options. If `MEMCACHE_SERVERS` is set in your environment, or if your
 Memcached instance is running on localhost, port 11211, this is the quickest
 way to get started. Alternatively, you can pass in your own single-threaded
@@ -81,18 +83,21 @@ will definitely want to use either the default ConnectionPool or your own (as
 opposed to a single-threaded Dalli::Client instance).
 
 The main instance method, `#exceeded?` will return a falsy value if the request
-is free to proceed. If the limit has been exceeded, it will return a floating
-point value that represents the fractional number of seconds that the caller
-should wait until retrying the request. Assuming no other requests were process
-during that time, the retried request will be free to proceed at that point.
-When invoking this method, please be sure to pass in a key that is unique (in
-combination with the `:key_prefix` option described above) to the thing you are
-trying to limit. An optional second argument specifies the number of requests
-to "consume" from the allowance; this defaults to one (1). Please note that if
-the number of requests is greater than the maximum number of requests, it will
-never not be limited. Consider a limit of 50 requests per minute: no amount of
-waiting would allow for a batch of 51 requests! To help check for this, a
-public getter method `#max_requests` is available.
+is free to proceed. If the limit has been exceeded, it will return a positive
+floating point value that represents the fractional number of seconds that the
+caller should wait until retrying the request. Assuming no other requests were
+process during that time, the retried request will be free to proceed at that
+point.  When invoking this method, please be sure to pass in a key that is
+unique (in combination with the `:key_prefix` option described above) to the
+thing you are trying to limit. An optional second argument specifies the number
+of requests to "consume" from the allowance; this defaults to one (1).
+
+Please note that if the number of requests is greater than the maximum number
+of requests, the limit will never not be exceeded. Consider a limit of 50
+requests per minute: no amount of waiting would ever allow for a batch of 51
+requests! `#exceeded?` returns a negative integer in this event. To help detect
+this edge case proactively, a public getter method `#max_requests` is
+available.
 
 ## Advanced Usage
 
@@ -141,8 +146,9 @@ performance boost][8].
 
 A rate-limiting system is only as good as its backing store, and it should be
 noted that a Memcached ring can lose members or indeed its entire working set
-at the drop of a hat. Mission-critical use cases, where operations absolutely,
-positively have to be idempotent, should probably seek solutions elsewhere.
+(in the event of a flush operation) at the drop of a hat. Mission-critical use
+cases, where repeated operations absolutely, positively have to be restricted,
+should probably seek solutions elsewhere.
 
 The limiting algorithm seems to work well but it is far from battle-tested. I
 tried to use atomic operations where possible to mitigate race conditions, but
