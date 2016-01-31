@@ -26,6 +26,8 @@ module Dalli
     end
 
     def exceeded?(unique_key, to_consume = 1)
+      return nil if to_consume == 0
+
       to_consume = to_ems(to_consume)
 
       return -1 if to_consume > @max_requests
