@@ -12,19 +12,70 @@ module Dalli
     0x0d
   ].map(&:chr).join("").freeze
 
+  # Dalli::RateLimiter provides arbitrary Memcached-backed rate limiting for
+  # your Ruby applications.
+  #
+  # @see file:README.md
+  #
+  # @!attribute [r] max_requests
+  #   @return [Float] the maximum number of requests in a human-friendly format
   class RateLimiter
     LOCK_TTL = 30
     LOCK_MAX_TRIES = 6
 
+    DEFAULT_OPTIONS = {
+      :key_prefix => "dalli-rate_limiter",
+      :max_requests => 5_000,
+      :period => 8_000,
+      :locking => true
+    }.freeze
+
+    private_constant :DEFAULT_OPTIONS
+
+    # Create a new instance of Dalli::RateLimiter.
+    #
+    # @param dalli [nil, ConnectionPool, Dalli::Client] the Dalli::Client (or
+    #   ConnectionPool of Dalli::Client) to use as a backing store for this
+    #   rate limiter
+    # @param options [Hash{Symbol}] configuration options for this rate limiter
+    #
+    # @option options [String] :key_prefix ("dalli-rate_limiter") a unique
+    #   string describing this rate limiter
+    # @option options [Integer, Float] :max_requests (5) maximum number of
+    #   requests over the governed interval
+    # @option options [Integer, Float] :period (8) number of seconds over
+    #    which to enforce the maximum number of requests
+    # @option options [Boolean] :locking (true) enable or disable locking
     def initialize(dalli = nil, options = {})
       @dalli = dalli || ConnectionPool.new { Dalli::Client.new }
 
-      @key_prefix = options[:key_prefix] || "dalli-rate_limiter"
-      @max_requests = to_ems(options[:max_requests] || 5)
-      @period = to_ems(options[:period] || 8)
-      @locking = options.key?(:locking) ? !!options[:locking] : true
+      options = normalize_options options
+
+      @key_prefix = options[:key_prefix]
+      @max_requests = options[:max_requests]
+      @period = options[:period]
+      @locking = options[:locking]
     end
 
+    def max_requests
+      to_fs @max_requests
+    end
+
+    # Determine whether processing a given request would exceed the rate limit.
+    #
+    # @param unique_key [String] a key to use, in combination with the
+    #   `:key_prefix` and any `:namespace` defined in the Dalli::Client, to
+    #   distinguish the item being limited from similar items
+    # @param to_consume [Integer, Float] the number of requests to consume from
+    #   the allowance (used to represent a batch of requests)
+    #
+    # @return [-Integer] if the number to consume exceeds the maximum,
+    #   and the request as given would never not exceed the limit
+    # @return [Float] if processing the request as given would exceed
+    #   the limit and the caller should wait so many [fractional] seconds
+    #   before retrying
+    # @return [nil] if the request can be processed as given without exceeding
+    #   the limit (including the case where the number to consume is zero)
     def exceeded?(unique_key, to_consume = 1)
       return nil if to_consume == 0
 
@@ -78,11 +129,23 @@ module Dalli
       end
     end
 
-    def max_requests
-      to_fs(@max_requests)
-    end
-
     private
+
+    def normalize_options(options)
+      options[:key_prefix] = cleanse_key options[:key_prefix] \
+        if options[:key_prefix]
+
+      options[:max_requests] = to_ems options[:max_requests].to_f \
+        if options[:max_requests]
+
+      options[:period] = to_ems options[:period].to_f \
+        if options[:period]
+
+      options[:locking] = !!options[:locking] \
+        if options.key? :locking
+
+      DEFAULT_OPTIONS.dup.merge! options
+    end
 
     def acquire_lock(dc, key)
       lock_key = format_key(key, "mutex")
@@ -115,7 +178,11 @@ module Dalli
     end
 
     def format_key(key, attribute)
-      "#{@key_prefix}:#{key.to_s.delete INVALID_KEY_CHARS}:#{attribute}"
+      "#{@key_prefix}:#{cleanse_key key}:#{attribute}"
+    end
+
+    def cleanse_key(key)
+      key.to_s.delete INVALID_KEY_CHARS
     end
   end
 end
