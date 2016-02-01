@@ -121,7 +121,7 @@ module Dalli
 
         dc.set(timestamp_key, current_timestamp, @period, :raw => true)
         dc.add(allowance_key, previous_allowance, 0, :raw => true) # ensure baseline exists
-        dc.send(allowance_delta < 0 ? :decr : :incr, allowance_key, allowance_delta.abs)
+        dc.send(allowance_delta < 0 ? :decr : :incr, allowance_key, allowance_delta.abs) if allowance_delta.nonzero?
         dc.touch(allowance_key, @period)
 
         release_lock(dc, unique_key) if lock
