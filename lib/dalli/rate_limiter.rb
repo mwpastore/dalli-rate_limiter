@@ -69,15 +69,16 @@ module Dalli
     # @param to_consume [Integer, Float] the number of requests to consume from
     #   the allowance (used to represent a batch of requests)
     #
-    # @return [-Integer] if the number to consume exceeds the maximum,
-    #   and the request as given would never not exceed the limit
+    # @return [false] if the request can be processed as given without
+    #   exceeding the limit (including the case where the number to consume is
+    #   zero)
     # @return [Float] if processing the request as given would exceed
     #   the limit and the caller should wait so many [fractional] seconds
     #   before retrying
-    # @return [nil] if the request can be processed as given without exceeding
-    #   the limit (including the case where the number to consume is zero)
+    # @return [-1] if the number to consume exceeds the maximum,
+    #   and the request as given would never not exceed the limit
     def exceeded?(unique_key, to_consume = 1)
-      return nil if to_consume == 0
+      return false if to_consume == 0
 
       to_consume = to_ems(to_consume)
 
@@ -91,7 +92,7 @@ module Dalli
           # Short-circuit the simple case of seeing the key for the first time.
           dc.set(timestamp_key, to_ems(Time.now.to_f), @period, :raw => true)
 
-          return nil
+          return false
         end
 
         lock = acquire_lock(dc, unique_key) if @locking
@@ -99,8 +100,8 @@ module Dalli
         current_timestamp = to_ems(Time.now.to_f) # obtain timestamp after locking
 
         previous = dc.get_multi allowance_key, timestamp_key
-        previous_allowance = previous[allowance_key].to_i || @max_requests
-        previous_timestamp = previous[timestamp_key].to_i || current_timestamp
+        previous_allowance = previous.key?(allowance_key) ? previous[allowance_key].to_i : @max_requests
+        previous_timestamp = previous.key?(timestamp_key) ? previous[timestamp_key].to_i : current_timestamp
 
         allowance_delta = (1.0 * (current_timestamp - previous_timestamp) * @max_requests / @period).to_i
         projected_allowance = previous_allowance + allowance_delta
@@ -125,26 +126,28 @@ module Dalli
 
         release_lock(dc, unique_key) if lock
 
-        return nil
+        return false
       end
     end
 
     private
 
     def normalize_options(options)
-      options[:key_prefix] = cleanse_key options[:key_prefix] \
+      normalized_options = {}
+
+      normalized_options[:key_prefix] = cleanse_key options[:key_prefix] \
         if options[:key_prefix]
 
-      options[:max_requests] = to_ems options[:max_requests].to_f \
+      normalized_options[:max_requests] = to_ems options[:max_requests].to_f \
         if options[:max_requests]
 
-      options[:period] = to_ems options[:period].to_f \
+      normalized_options[:period] = to_ems options[:period].to_f \
         if options[:period]
 
-      options[:locking] = !!options[:locking] \
+      normalized_options[:locking] = !!options[:locking] \
         if options.key? :locking
 
-      DEFAULT_OPTIONS.dup.merge! options
+      DEFAULT_OPTIONS.dup.merge! normalized_options
     end
 
     def acquire_lock(dc, key)

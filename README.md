@@ -82,22 +82,21 @@ attributes so it should be safe to share between threads; in this case, you
 will definitely want to use either the default ConnectionPool or your own (as
 opposed to a single-threaded Dalli::Client instance).
 
-The main instance method, `#exceeded?` will return a falsy value if the request
-is free to proceed. If the limit has been exceeded, it will return a positive
-floating point value that represents the fractional number of seconds that the
-caller should wait until retrying the request. Assuming no other requests were
-process during that time, the retried request will be free to proceed at that
-point.  When invoking this method, please be sure to pass in a key that is
-unique (in combination with the `:key_prefix` option described above) to the
-thing you are trying to limit. An optional second argument specifies the number
-of requests to "consume" from the allowance; this defaults to one (1).
+The main instance method, `#exceeded?` will return false if the request is free
+to proceed. If the limit has been exceeded, it will return a positive floating
+point value that represents the fractional number of seconds that the caller
+should wait until retrying the request. Assuming no other requests were process
+during that time, the retried request will be free to proceed at that point.
+When invoking this method, please be sure to pass in a key that is unique (in
+combination with the `:key_prefix` option described above) to the thing you are
+trying to limit. An optional second argument specifies the number of requests
+to "consume" from the allowance; this defaults to one (1).
 
 Please note that if the number of requests is greater than the maximum number
 of requests, the limit will never not be exceeded. Consider a limit of 50
 requests per minute: no amount of waiting would ever allow for a batch of 51
-requests! `#exceeded?` returns a negative integer in this event. To help detect
-this edge case proactively, a public getter method `#max_requests` is
-available.
+requests! `#exceeded?` returns `-1` in this event. To help detect this edge
+case proactively, a public getter method `#max_requests` is available.
 
 ## Advanced Usage
 
