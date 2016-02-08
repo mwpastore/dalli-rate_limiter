@@ -39,4 +39,12 @@ describe Dalli::RateLimiter do
 
     Then { result && result < 0 }
   end
+
+  context "with a block" do
+    When(:result) do
+      lim.without_exceeding("test_key_6") { 1 + 1 }
+    end
+
+    Then { result == 2 }
+  end
 end

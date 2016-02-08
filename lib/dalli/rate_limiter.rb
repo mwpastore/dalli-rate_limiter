@@ -6,186 +6,181 @@ require "connection_pool"
 require "dalli/rate_limiter/version"
 
 module Dalli
-  INVALID_KEY_CHARS = [
-    0x00, 0x20,
-    0x09, 0x0a,
-    0x0d
-  ].map(&:chr).join("").freeze
-
   # Dalli::RateLimiter provides arbitrary Memcached-backed rate limiting for
   # your Ruby applications.
   #
   # @see file:README.md
   #
   # @!attribute [r] max_requests
-  #   @return [Float] the maximum number of requests in a human-friendly format
+  #   @return [Float] the maximum number of requests
   class RateLimiter
-    LOCK_TTL = 30
-    LOCK_MAX_TRIES = 6
+    LockError = Class.new RuntimeError
+    LimitError = Class.new RuntimeError
 
     DEFAULT_OPTIONS = {
       :key_prefix => "dalli-rate_limiter",
-      :max_requests => 5_000,
-      :period => 8_000,
-      :locking => true
+      :max_requests => 5,
+      :period => 8,
+      :lock_timeout => 30
     }.freeze
 
-    private_constant :DEFAULT_OPTIONS
+    attr_reader :max_requests
 
     # Create a new instance of Dalli::RateLimiter.
     #
-    # @param dalli [nil, ConnectionPool, Dalli::Client] the Dalli::Client (or
+    # @param dalli [ConnectionPool, Dalli::Client] the Dalli::Client (or
     #   ConnectionPool of Dalli::Client) to use as a backing store for this
     #   rate limiter
-    # @param options [Hash{Symbol}] configuration options for this rate limiter
+    # @param options [Hash] configuration options for this rate limiter
     #
-    # @option options [String] :key_prefix ("dalli-rate_limiter") a unique
-    #   string describing this rate limiter
+    # @option options [String, #to_s] :key_prefix ("dalli-rate_limiter") a
+    #   unique string describing this rate limiter
     # @option options [Integer, Float] :max_requests (5) maximum number of
     #   requests over the governed interval
     # @option options [Integer, Float] :period (8) number of seconds over
     #    which to enforce the maximum number of requests
-    # @option options [Boolean] :locking (true) enable or disable locking
+    # @option options [Integer, Float] :lock_timeout (30) maximum number of
+    #    seconds to wait for the lock to become available
     def initialize(dalli = nil, options = {})
-      @dalli = dalli || ConnectionPool.new { Dalli::Client.new }
+      @pool = dalli || ConnectionPool.new { Dalli::Client.new }
 
       options = normalize_options options
 
       @key_prefix = options[:key_prefix]
       @max_requests = options[:max_requests]
       @period = options[:period]
-      @locking = options[:locking]
-    end
-
-    def max_requests
-      to_fs @max_requests
+      @lock_timeout = options[:lock_timeout]
     end
 
     # Determine whether processing a given request would exceed the rate limit.
     #
-    # @param unique_key [String] a key to use, in combination with the
-    #   `:key_prefix` and any `:namespace` defined in the Dalli::Client, to
-    #   distinguish the item being limited from similar items
+    # @param unique_key [String, #to_s] a key to use, in combination with the
+    #   optional `:key_prefix` and any `:namespace` defined in the
+    #   Dalli::Client, to distinguish the item being limited from similar items
     # @param to_consume [Integer, Float] the number of requests to consume from
-    #   the allowance (used to represent a batch of requests)
+    #   the allowance (used to represent a partial request or a batch of
+    #   requests)
     #
     # @return [false] if the request can be processed as given without
     #   exceeding the limit (including the case where the number to consume is
     #   zero)
     # @return [Float] if processing the request as given would exceed
-    #   the limit and the caller should wait so many [fractional] seconds
+    #   the limit and the caller should wait so many (fractional) seconds
     #   before retrying
-    # @return [-1] if the number to consume exceeds the maximum,
-    #   and the request as given would never not exceed the limit
-    def exceeded?(unique_key, to_consume = 1)
-      return false if to_consume == 0
+    # @return [-1] if the number to consume exceeds the maximum, and the
+    #   request as given would never not exceed the limit
+    #
+    # @raise [LockError] if a lock cannot be obtained before `@lock_timeout`
+    def exceeded?(unique_key = nil, to_consume = 1)
+      return false if to_consume <= 0
+      return -1 if to_consume > max_requests
 
-      to_consume = to_ems(to_consume)
+      key = [@key_prefix, unique_key].compact.join(":")
+      to_consume = to_consume.to_f
 
-      return -1 if to_consume > @max_requests
+      try = 1
+      total_time = 0
+      loop do
+        @pool.with do |dc|
+          result = dc.cas(key, @period) do |previous_value|
+            wait, value = compute(previous_value, to_consume)
+            return wait if wait > 0 # caller must wait
+            value
+          end
 
-      timestamp_key = format_key(unique_key, "timestamp")
-      allowance_key = format_key(unique_key, "allowance")
+          # TODO: We can get rid of this block when Dalli::Client supports #cas!
+          if result.nil?
+            _, value = compute(nil, to_consume)
+            result = dc.add(key, value, @period)
+          end
 
-      @dalli.with do |dc|
-        if dc.add(allowance_key, @max_requests - to_consume, @period, :raw => true)
-          # Short-circuit the simple case of seeing the key for the first time.
-          dc.set(timestamp_key, to_ems(Time.now.to_f), @period, :raw => true)
-
-          return false
+          return false if result # caller can proceed
         end
 
-        lock = acquire_lock(dc, unique_key) if @locking
+        time = rand * Math.sqrt(try / Math::E)
+        raise LockError, "Unable to lock key for update" \
+          if time + total_time > @lock_timeout
+        sleep time
 
-        current_timestamp = to_ems(Time.now.to_f) # obtain timestamp after locking
-
-        previous = dc.get_multi allowance_key, timestamp_key
-        previous_allowance = previous.key?(allowance_key) ? previous[allowance_key].to_i : @max_requests
-        previous_timestamp = previous.key?(timestamp_key) ? previous[timestamp_key].to_i : current_timestamp
-
-        allowance_delta = (1.0 * (current_timestamp - previous_timestamp) * @max_requests / @period).to_i
-        projected_allowance = previous_allowance + allowance_delta
-        if projected_allowance > @max_requests
-          projected_allowance = @max_requests
-          allowance_delta = @max_requests - previous_allowance
-        end
-
-        if to_consume > projected_allowance
-          release_lock(dc, unique_key) if lock
-
-          # Tell the caller how long (in seconds) to wait before retrying the request.
-          return to_fs((1.0 * (to_consume - projected_allowance) * @period / @max_requests).to_i)
-        end
-
-        allowance_delta -= to_consume
-
-        dc.set(timestamp_key, current_timestamp, @period, :raw => true)
-        dc.add(allowance_key, previous_allowance, 0, :raw => true) # ensure baseline exists
-        dc.send(allowance_delta < 0 ? :decr : :incr, allowance_key, allowance_delta.abs) if allowance_delta.nonzero?
-        dc.touch(allowance_key, @period)
-
-        release_lock(dc, unique_key) if lock
-
-        return false
+        try += 1
+        total_time += time
       end
+    end
+
+    # Execute a block without exceeding the rate limit.
+    #
+    # @param (see #exceeded?)
+    # @param options [Hash] configuration options
+    #
+    # @option options [Integer] :wait_timeout maximum number of seconds to wait
+    #   before yielding
+    #
+    # @yield block to execute within limit
+    #
+    # @raise [LimitError] if the block cannot be yielded to within
+    #  `:wait_timeout` seconds without going over the limit
+    # @raise (see #exceeded?)
+    #
+    # @return the return value of the passed block
+    def without_exceeding(unique_key = nil, to_consume = 1, options = {})
+      options[:wait_timeout] = options[:wait_timeout].to_f \
+        if options[:wait_timeout]
+
+      start_time = Time.now.to_f
+      while time = exceeded?(unique_key, to_consume)
+        raise LimitError, "Unable to yield without exceeding limit" \
+          if time < 0 || options[:wait_timeout] && time + Time.now.to_f - start_time > options[:wait_timeout]
+        sleep time
+      end
+
+      yield
     end
 
     private
 
+    def compute(previous, to_consume)
+      current_timestamp = Time.now.to_f
+
+      previous ||= {}
+      previous_allowance = previous[:allowance] || @max_requests
+      previous_timestamp = previous[:timestamp] || current_timestamp
+
+      allowance_delta = (current_timestamp - previous_timestamp) * @max_requests / @period
+      projected_allowance = previous_allowance + allowance_delta
+      if projected_allowance > @max_requests
+        projected_allowance = @max_requests
+        allowance_delta = @max_requests - previous_allowance
+      end
+
+      if to_consume > projected_allowance
+        # Determine how long the caller must wait (in seconds) before retrying the request.
+        wait = (to_consume - projected_allowance) * @period / @max_requests
+      else
+        current = {
+          :allowance => previous_allowance + allowance_delta - to_consume,
+          :timestamp => current_timestamp
+        }
+      end
+
+      [wait || 0, current || previous]
+    end
+
     def normalize_options(options)
       normalized_options = {}
 
-      normalized_options[:key_prefix] = cleanse_key options[:key_prefix] \
-        if options[:key_prefix]
+      normalized_options[:key_prefix] = options[:key_prefix].to_s \
+        if options.key? :key_prefix
 
-      normalized_options[:max_requests] = to_ems options[:max_requests].to_f \
-        if options[:max_requests]
+      normalized_options[:max_requests] = options[:max_requests].to_f \
+        if options[:max_requests] && options[:max_requests].to_f > 0
 
-      normalized_options[:period] = to_ems options[:period].to_f \
-        if options[:period]
+      normalized_options[:period] = options[:period].to_f \
+        if options[:period] && options[:period].to_f > 0
 
-      normalized_options[:locking] = !!options[:locking] \
-        if options.key? :locking
+      normalized_options[:lock_timeout] = options[:lock_timeout].to_f \
+        if options[:lock_timeout] && options[:lock_timeout].to_f >= 0
 
       DEFAULT_OPTIONS.dup.merge! normalized_options
-    end
-
-    def acquire_lock(dc, key)
-      lock_key = format_key(key, "mutex")
-
-      (1..LOCK_MAX_TRIES).each do |tries|
-        if lock = dc.add(lock_key, true, LOCK_TTL)
-          return lock
-        else
-          sleep rand(2**tries)
-        end
-      end
-
-      raise DalliError, "Unable to lock key for update"
-    end
-
-    def release_lock(dc, key)
-      lock_key = format_key(key, "mutex")
-
-      dc.delete(lock_key)
-    end
-
-    # Convert fractional units to encoded milliunits
-    def to_ems(fs)
-      (fs * 1_000).to_i
-    end
-
-    # Convert encoded milliunits to fractional units
-    def to_fs(ems)
-      1.0 * ems / 1_000
-    end
-
-    def format_key(key, attribute)
-      "#{@key_prefix}:#{cleanse_key key}:#{attribute}"
-    end
-
-    def cleanse_key(key)
-      key.to_s.delete INVALID_KEY_CHARS
     end
   end
 end

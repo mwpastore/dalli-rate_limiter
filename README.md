@@ -21,20 +21,26 @@ tightly integrate a check within your business logic.
 [ConnectionPool][5] gems for fast and efficient Memcached access and
 thread-safe connection pooling. It uses an allowance counter and floating
 timestamp to implement a sliding window for each unique key, enforcing a limit
-of _m_ requests over a period of _n_ seconds. It supports arbitrary unit
-quantities of consumption for operations that logically count as more than one
-request (i.e. batched requests). A simple mutex locking scheme (enabled by
-default) is used to mitigate race conditions and ensure that the limit is
-enforced under most cirumstances (see [Caveats](#caveats) below).  Math
-operations are performed with three decimal places of precision but the results
-are stored in Memcached as integers.
+of _m_ requests over a period of _n_ seconds. If you're familiar with
+[Sidekiq][10] (which is another excellent piece of software, written by the same
+person who wrote Dalli and ConnectionPool), it is similar to the Window style
+of the Sidekiq::Limiter class, although the invocation syntax differs slightly
+(see [Block Form](#block-form) below for an example of the differences).
+
+It supports arbitrary unit quantities of consumption for partial operations or
+for operations that logically count as more than one request (i.e. batched
+requests). It leverages Memcached's compare-and-set method&mdash;which uses an
+opportunistic locking scheme&mdash;in combination with a back-off algorithm to
+mitigate race conditions while ensuring that limits are enforced under high
+levels of concurrency with a high degree of confidence. Math operations are
+performed with floating-point precision.
 
 ## Installation
 
 Add this line to your application's Gemfile:
 
 ```ruby
-gem 'dalli-rate_limiter', '~> 0.1.0'
+gem 'dalli-rate_limiter', '~> 0.2.0'
 ```
 
 And then execute:
@@ -51,11 +57,11 @@ Or install it yourself as:
 def do_foo
   lim = Dalli::RateLimiter.new
 
-  if lim.exceeded? "foo"
+  if lim.exceeded?
     fail "Sorry, can't foo right now. Try again later!"
   end
 
-  # ..
+  # Do foo...
 end
 ```
 
@@ -70,10 +76,9 @@ connection settings. Pass in `nil` to force the default behavior.
 
 The library itself defaults to five (5) requests per eight (8) seconds, but
 these can easily be changed with the `:max_requests` and `:period` options.
-Locking can be disabled by setting the `:locking` option to `false` (see
-[Caveats](#caveats) below). A `:key_prefix` option can be specified as well;
-note that this will be used in combination with any `:namespace` option defined
-in the Dalli::Client.
+Locking can be fine-tuned by setting the `:lock_timeout` option. A
+`:key_prefix` option can be specified as well; note that this will be used in
+combination with any `:namespace` option defined in the Dalli::Client.
 
 The **Dalli::RateLimiter** instance itself is not stateful, so it can be
 instantiated as needed (e.g. in a function definition) or in a more global
@@ -98,6 +103,14 @@ requests per minute: no amount of waiting would ever allow for a batch of 51
 requests! `#exceeded?` returns `-1` in this event. To help detect this edge
 case proactively, a public getter method `#max_requests` is available.
 
+An alternative block-form syntax is available using the `#without_exceeding`
+method. This method will call `sleep` on your behalf until the block can be
+executed without exceeding the limit, and then yield to the block. This is
+useful in situations where you want to avoid writing your own sleep-while loop.
+You can limit how long the method will sleep by passing in a `:wait_timeout`
+option; please note that the total wait time includes any time spent acquiring
+the lock.
+
 ## Advanced Usage
 
 ```ruby
@@ -116,7 +129,9 @@ def change_username(user_id, new_username)
     halt 422, "Sorry! Only two username changes allowed per hour."
   end
 
-  # ..
+  # Change username...
+rescue Dalli::RateLimiter::LockError
+  # Unable to acquire a lock...
 end
 
 def add_widgets(foo_id, some_widgets)
@@ -124,19 +139,50 @@ def add_widgets(foo_id, some_widgets)
     halt 400, "Too many widgets!"
   end
 
-  if time = lim2.exceeded? foo_id, some_widgets.length
+  if time = lim2.exceeded?(foo_id, some_widgets.length)
     halt 422, "Sorry! Unable to process request. " \
       "Please wait at least #{time} seconds before trying again."
   end
 
-  # ..
+  # Add widgets...
+rescue Dalli::RateLimiter::LockError
+  # Unable to acquire a lock...
 end
 ```
+
+## Block Form
+
+Rewriting the Sidekiq::Limiter.window [example][9] from its documentation:
+
+```ruby
+def perform(user_id)
+  user_throttle = Dalli::RateLimiter.new nil,
+    :key_prefix => "stripe", :max_requests => 5, :period => 1
+
+  user_throttle.without_exceeding(user_id, 1, :wait_timeout => 5) do
+    # call stripe with user's account creds
+  end
+rescue Dalli::RateLimiter::LimitError
+  # Unable to execute block before wait timeout...
+rescue Dalli::RateLimiter::LockError
+  # Unable to acquire a lock...
+end
+```
+
+You have the flexibility to set the `:key_prefix` to `nil` and pass in
+`"stripe:#{user_id}"` as the first argument to `#without_exceeding`, with same
+end results. Or, likewise, you could set `:key_prefix` to `"stripe:#{user_id}"`
+and pass in `nil` as the first argument to `#without_exceeding`. Sometimes it
+makes sense to share an instance between method calls, or indeed between
+different methods, and sometimes it doesn't. Please note that if `:key_prefix`
+and the first argument to `#exceeded?` or `#without_exceeding` are both `nil`,
+Dalli::Client will abort with an ArgumentError ("key cannot be blank").
 
 ## Compatibility
 
 **Dalli::RateLimiter** is compatible with Ruby 1.9.3 and greater and has been
-tested with frozen string literals under Ruby 2.3.0.
+tested with frozen string literals under Ruby 2.3.0. It has also been tested
+under Rubinius 2.15 and 3.14, and JRuby 1.7 (in 1.9.3 execution mode) and 9K.
 
 You might consider installing the [kgio][7] gem to [give Dalli a 10-20%
 performance boost][8].
@@ -149,15 +195,13 @@ noted that a Memcached ring can lose members or indeed its entire working set
 cases, where repeated operations absolutely, positively have to be restricted,
 should probably seek solutions elsewhere.
 
-The limiting algorithm seems to work well but it is far from battle-tested. I
-tried to use atomic operations where possible to mitigate race conditions, but
-still had to implement a locking scheme, which might slow down operations and
-lead to timeouts and exceptions if a lock can't be acquired for some reason.
-Locking can be disabled but this will increase the chances that a determined
-attacker figures out a way to defeat the limit.
-
-I will likely be revisiting the algorithm in the future, but at the moment it
-is in the unfortunate state of "good enough".
+The limiting algorithm, which was overhauled for the 0.2.0 release to greatly
+reduce the number of round-trips to Memcached, seems to work well but it is
+far from battle-tested. Simple benchmarking against a local Memcached instance
+shows zero lock timeouts with the default settings and 100 threads hitting the
+same limit concurrently. (Testing performed on a 2012 MacBook Pro with an Intel
+i7-3615QM processor and 16 GB RAM; benchmarking scripts available in the `bin`
+subdirectory of this repository.)
 
 As noted above, this is not a replacement for an application-level rate limit,
 and if your application faces the web, you should probably definitely have
@@ -165,6 +209,11 @@ something else in your stack to handle e.g. a casual DoS.
 
 Make sure your ConnectionPool has enough slots for these operations. I aim for
 one slot per thread plus one or two for overhead in my applications.
+
+## Documentation
+
+This README is fairly comprehensive, but additional information about the
+class and its methods is available in [YARD][11].
 
 ## Development
 
@@ -196,3 +245,6 @@ License](http://opensource.org/licenses/MIT).
 [6]: http://memcached.org "Memcached"
 [7]: http://bogomips.org/kgio "kgio"
 [8]: https://github.com/petergoldstein/dalli/blob/master/Performance.md "Dalli Performance"
+[9]: https://github.com/mperham/sidekiq/wiki/Ent-Rate-Limiting#window "Sidekiq::Limiter.window"
+[10]: http://sidekiq.org "Sidekiq"
+[11]: http://www.rubydoc.info/github/mwpastore/dalli-rate_limiter/master/Dalli/RateLimiter "Dalli::RateLimiter on RubyDoc.info"
