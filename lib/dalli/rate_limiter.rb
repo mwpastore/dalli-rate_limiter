@@ -138,12 +138,12 @@ module Dalli
 
     private
 
-    def compute(previous, to_consume)
+    def compute(previous_value, to_consume)
       current_timestamp = Time.now.to_f
 
-      previous ||= {}
-      previous_allowance = previous[:allowance] || @max_requests
-      previous_timestamp = previous[:timestamp] || current_timestamp
+      previous_value ||= {}
+      previous_allowance = previous_value[:allowance] || @max_requests
+      previous_timestamp = previous_value[:timestamp] || current_timestamp
 
       allowance_delta = (current_timestamp - previous_timestamp) * @max_requests / @period
       projected_allowance = previous_allowance + allowance_delta
@@ -153,16 +153,16 @@ module Dalli
       end
 
       if to_consume > projected_allowance
-        # Determine how long the caller must wait (in seconds) before retrying the request.
+        # Determine how long the caller must wait (in seconds) before retrying.
         wait = (to_consume - projected_allowance) * @period / @max_requests
       else
-        current = {
+        value = {
           :allowance => previous_allowance + allowance_delta - to_consume,
           :timestamp => current_timestamp
         }
       end
 
-      [wait || 0, current || previous]
+      [wait || 0, value || previous_value]
     end
 
     def normalize_options(options)

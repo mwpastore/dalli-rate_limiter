@@ -63,6 +63,14 @@ def do_foo
 
   # Do foo...
 end
+
+def do_bar
+  lim = Dalli::RateLimiter.new
+
+  lim.without_exceeding do
+    # Do bar...
+  end
+end
 ```
 
 **Dalli::RateLimiter** will, by default, create a ConnectionPool with its
@@ -115,7 +123,7 @@ the lock.
 
 ```ruby
 dalli = ConnectionPool.new(:size => 5, :timeout => 3) {
-  Dalli::Client.new(nil, :namespace => "myapp")
+  Dalli::Client.new nil, :namespace => "myapp"
 }
 
 lim1 = Dalli::RateLimiter.new dalli,
@@ -125,34 +133,56 @@ lim2 = Dalli::RateLimiter.new dalli,
   :key_prefix => "widgets-throttle", :max_requests => 10, :period => 60
 
 def change_username(user_id, new_username)
-  if lim1.exceeded? user_id
+  if lim1.exceeded?(user_id) # user-specific limit on changing usernames
     halt 422, "Sorry! Only two username changes allowed per hour."
   end
 
   # Change username...
 rescue Dalli::RateLimiter::LockError
-  # Unable to acquire a lock...
+  # Unable to acquire a lock before lock timeout...
 end
 
-def add_widgets(foo_id, some_widgets)
+def add_widgets(some_widgets)
   if some_widgets.length > lim2.max_requests
     halt 400, "Too many widgets!"
   end
 
-  if time = lim2.exceeded?(foo_id, some_widgets.length)
+  if time = lim2.exceeded?(nil, some_widgets.length) # global limit on adding widgets
     halt 422, "Sorry! Unable to process request. " \
       "Please wait at least #{time} seconds before trying again."
   end
 
   # Add widgets...
 rescue Dalli::RateLimiter::LockError
-  # Unable to acquire a lock...
+  # Unable to acquire a lock before lock timeout...
 end
 ```
 
 ## Block Form
 
-Rewriting the Sidekiq::Limiter.window [example][9] from its documentation:
+This alternative syntax will sleep (as necessary) until the request can be
+processed without exceeding the limit. An optional wait timout can be specified
+to prevent the method from sleeping forever. Rewriting the `add_widgets` method
+from above:
+
+```ruby
+def add_widgets(some_widgets)
+  if some_widgets.length > lim2.max_requests
+    halt 400, "Too many widgets!"
+  end
+
+  lim2.without_exceeding(nil, some_widgets.length, :wait_timeout => 30) do
+    # Add widgets...
+  end
+rescue Dalli::RateLimiter::LimitError
+  halt 422, "Sorry! Request timed out. Please try again later."
+rescue Dalli::RateLimiter::LockError
+  # Unable to acquire a lock before lock timeout...
+end
+```
+
+This feature was originally requested for parity with Sidekiq::Limiter, so
+here's an example adapted from Sidekiq::Limiter.window's [documentation][9]:
 
 ```ruby
 def perform(user_id)
@@ -165,7 +195,7 @@ def perform(user_id)
 rescue Dalli::RateLimiter::LimitError
   # Unable to execute block before wait timeout...
 rescue Dalli::RateLimiter::LockError
-  # Unable to acquire a lock...
+  # Unable to acquire a lock before lock timeout...
 end
 ```
 
