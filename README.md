@@ -88,19 +88,21 @@ Locking can be fine-tuned by setting the `:lock_timeout` option. A
 `:key_prefix` option can be specified as well; note that this will be used in
 combination with any `:namespace` option defined in the Dalli::Client.
 
-The **Dalli::RateLimiter** instance itself is not stateful, so it can be
-instantiated as needed (e.g. in a function definition) or in a more global
-scope (e.g. in a Rails initializer). It does not mutate any of its own
-attributes so it should be safe to share between threads; in this case, you
-will definitely want to use either the default ConnectionPool or your own (as
-opposed to a single-threaded Dalli::Client instance).
+The **Dalli::RateLimiter** instance itself is not stateful (in that it doesn't
+track the state of the things being limited, only the parameters of the limit
+itself), so it can be instantiated as needed (e.g. in a function definition) or
+in a more global scope (e.g. in a Rails initializer). It does not mutate any of
+its own attributes or allow its attributes to be mutated so it should be safe
+to share between threads; in this case, you will likely want to use either the
+default ConnectionPool or your own (as opposed to a single-threaded
+Dalli::Client instance).
 
 The main instance method, `#exceeded?` will return `false` if the request is
 free to proceed. If the limit has been exceeded, it will return a positive
 floating point value that represents the fractional number of seconds that the
 caller should wait until retrying the request. Assuming no other requests were
 process during that time, the retried request will be free to proceed at that
-point.  When invoking this method, please be sure to pass in a key that is
+point. When invoking this method, please be sure to pass in a key that is
 unique (in combination with the `:key_prefix` option described above) to the
 thing you are trying to limit. An optional second argument specifies the number
 of requests to "consume" from the allowance; this defaults to one (1).
@@ -205,8 +207,8 @@ end results. Or, likewise, you could set `:key_prefix` to `"stripe:#{user_id}"`
 and pass in `nil` as the first argument to `#without_exceeding`. Sometimes it
 makes sense to share an instance between method calls, or indeed between
 different methods, and sometimes it doesn't. Please note that if `:key_prefix`
-and the first argument to `#exceeded?` or `#without_exceeding` are both `nil`,
-Dalli::Client will abort with an ArgumentError ("key cannot be blank").
+and the first argument to `#without_exceeding` (or `#exceeded?`) are both
+`nil`, Dalli::Client will abort with an ArgumentError ("key cannot be blank").
 
 ## Compatibility
 
@@ -223,15 +225,19 @@ A rate-limiting system is only as good as its backing store, and it should be
 noted that a Memcached ring can lose members or indeed its entire working set
 (in the event of a flush operation) at the drop of a hat. Mission-critical use
 cases, where repeated operations absolutely, positively have to be restricted,
-should probably seek solutions elsewhere.
+should probably seek solutions elsewhere. If you have already have Redis in
+your stack, you might consider a Redis-based rate limiter (such as
+Sidekiq::Limiter). Redis has better mechanisms for locking and updating keys,
+it doesn't lose its working set on restart, and polling can be reduced or
+eliminated through use of its built-in Lua scripting.
 
-The limiting algorithm, which was overhauled for the 0.2.0 release to greatly
-reduce the number of round-trips to Memcached, seems to work well but it is
-far from battle-tested. Simple benchmarking against a local Memcached instance
-shows zero lock timeouts with the default settings and 100 threads hitting the
-same limit concurrently. (Testing performed on a 2012 MacBook Pro with an Intel
-i7-3615QM processor and 16 GB RAM; benchmarking scripts available in the `bin`
-subdirectory of this repository.)
+The limiting algorithm&mdash;which was overhauled for the 0.2.0 release to
+greatly reduce the number of round-trips to Memcached&mdash;seems to work well,
+but it is far from battle-tested. Simple benchmarking against a local Memcached
+instance shows zero lock timeouts with the default settings and 100 threads
+hitting the same limit concurrently. (Testing performed on a 2012 MacBook Pro
+with an Intel i7-3615QM processor and 16 GB RAM; benchmarking scripts available
+in the `bin` subdirectory of this repository.)
 
 As noted above, this is not a replacement for an application-level rate limit,
 and if your application faces the web, you should probably definitely have
