@@ -72,11 +72,12 @@ module Dalli
     #
     # @raise [LockError] if a lock cannot be obtained before `@lock_timeout`
     def exceeded?(unique_key = nil, to_consume = 1)
+      to_consume = to_consume.to_f
+
       return false if to_consume <= 0
       return -1 if to_consume > max_requests
 
       key = [@key_prefix, unique_key].compact.join(":")
-      to_consume = to_consume.to_f
 
       try = 1
       total_time = 0

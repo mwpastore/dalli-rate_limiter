@@ -234,10 +234,13 @@ eliminated through use of its built-in Lua scripting.
 The limiting algorithm&mdash;which was overhauled for the 0.2.0 release to
 greatly reduce the number of round-trips to Memcached&mdash;seems to work well,
 but it is far from battle-tested. Simple benchmarking against a local Memcached
-instance shows zero lock timeouts with the default settings and 100 threads
-hitting the same limit concurrently. (Testing performed on a 2012 MacBook Pro
-with an Intel i7-3615QM processor and 16 GB RAM; benchmarking scripts available
-in the `bin` subdirectory of this repository.)
+instance shows zero lock timeouts with the default settings and 200 threads
+banging away at the same limit concurrently for an extended period of time.
+(Testing performed on a 2012 MacBook Pro with an Intel i7-3615QM processor and
+16 GB RAM; benchmarking scripts available in the `bin` subdirectory of this
+repository.) I do plan on performing additional testing with a few more client
+cores against a production (or production-like) Memcached ring at some point in
+the near future and will update these results at that time.
 
 As noted above, this is not a replacement for an application-level rate limit,
 and if your application faces the web, you should probably definitely have
