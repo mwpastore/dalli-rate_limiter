@@ -3,10 +3,10 @@
 **Dalli::RateLimiter** provides arbitrary [Memcached][6]-backed rate limiting
 for your Ruby applications. You may be using an application-level rate limiter
 such as [Rack::Ratelimit][1], [Rack::Throttle][2], or [Rack::Attack][3], or
-something higher up in your stack (like an Nginx zone or HAproxy stick-table).
+something higher up in your stack (like an NGINX zone or HAproxy stick-table).
 This is not intended to be a replacement for any of those functions. Your
 application may not even be a web service and yet you find yourself needing to
-throttle certain types of operations.
+limit (or throttle) certain types of operations.
 
 This library allows you to impose specific rate limits on specific functions at
 whatever granularity you desire. For example, you have a function in your Ruby
@@ -17,15 +17,14 @@ limit imposed by the provider for a certain endpoint. It wouldn't make sense to
 apply these limits at the application level&mdash;it would be much easier to
 tightly integrate a check within your business logic.
 
-**Dalli::RateLimiter** leverages the excellent [Dalli][4] and
-[ConnectionPool][5] gems for fast and efficient Memcached access and
-thread-safe connection pooling. It uses an allowance counter and floating
-timestamp to implement a sliding window for each unique key, enforcing a limit
-of _m_ requests over a period of _n_ seconds. If you're familiar with
-[Sidekiq][10] (which is another excellent piece of software, written by the same
-person who wrote Dalli and ConnectionPool), it is similar to the Window style
-of the Sidekiq::Limiter class, although the invocation syntax differs slightly
-(see [Block Form](#block-form) below for an example of the differences).
+**Dalli::RateLimiter** leverages the excellent [Dalli][4] gem for fast and
+efficient (and thread-safe) Memcached access. It uses an allowance counter and
+floating timestamp to implement a sliding window for each unique key, enforcing
+a limit of _m_ requests over a period of _n_ seconds. If you're familiar with
+[Sidekiq][10] (which is another excellent piece of software, written by the
+same person who wrote Dalli), it is similar to the Window style of the
+Sidekiq::Limiter class, although the invocation syntax differs slightly (see
+[Block Form](#block-form) below for an example of the differences).
 
 It supports arbitrary unit quantities of consumption for partial operations or
 for operations that logically count as more than one request (i.e. batched
@@ -40,7 +39,7 @@ performed with floating-point precision.
 Add this line to your application's Gemfile:
 
 ```ruby
-gem 'dalli-rate_limiter', '~> 0.2.0'
+gem 'dalli-rate_limiter', '~> 0.3.0'
 ```
 
 And then execute:
@@ -73,14 +72,13 @@ def do_bar
 end
 ```
 
-**Dalli::RateLimiter** will, by default, create a ConnectionPool with its
-default options, using a block that yields Dalli::Client instances with its
+**Dalli::RateLimiter** will, by default, use a Dalli::Client instance with the
 default options. If `MEMCACHE_SERVERS` is set in your environment, or if your
 Memcached instance is running on localhost, port 11211, this is the quickest
 way to get started. Alternatively, you can pass in your own single-threaded
 Dalli::Client instance&mdash;or your own multi-threaded ConnectionPool instance
-(wrapping Dalli::Client)&mdash;as the first argument to customize the
-connection settings. Pass in `nil` to force the default behavior.
+(see [Compatibility](#compatibility) below)&mdash;as the first argument to
+customize the connection settings. Pass in `nil` to force the default behavior.
 
 The library itself defaults to five (5) requests per eight (8) seconds, but
 these can easily be changed with the `:max_requests` and `:period` options.
@@ -93,9 +91,7 @@ track the state of the things being limited, only the parameters of the limit
 itself), so it can be instantiated as needed (e.g. in a function definition) or
 in a more global scope (e.g. in a Rails initializer). It does not mutate any of
 its own attributes or allow its attributes to be mutated so it should be safe
-to share between threads; in this case, you will likely want to use either the
-default ConnectionPool or your own (as opposed to a single-threaded
-Dalli::Client instance).
+to share between threads.
 
 The main instance method, `#exceeded?` will return `false` if the request is
 free to proceed. If the limit has been exceeded, it will return a positive
@@ -124,18 +120,20 @@ the lock.
 ## Advanced Usage
 
 ```ruby
+require "connection_pool"
+
 dalli = ConnectionPool.new(:size => 5, :timeout => 3) {
   Dalli::Client.new nil, :namespace => "myapp"
 }
 
-lim1 = Dalli::RateLimiter.new dalli,
-  :key_prefix => "username-throttle", :max_requests => 2, :period => 3_600
+USERNAME_LIMIT = Dalli::RateLimiter.new dalli,
+  :key_prefix => "username-limit", :max_requests => 2, :period => 3_600
 
-lim2 = Dalli::RateLimiter.new dalli,
-  :key_prefix => "widgets-throttle", :max_requests => 10, :period => 60
+WIDGETS_LIMIT = Dalli::RateLimiter.new dalli,
+  :key_prefix => "widgets-limit", :max_requests => 10, :period => 60
 
 def change_username(user_id, new_username)
-  if lim1.exceeded?(user_id) # user-specific limit on changing usernames
+  if USERNAME_LIMIT.exceeded?(user_id) # user-specific limit on changing usernames
     halt 422, "Sorry! Only two username changes allowed per hour."
   end
 
@@ -145,11 +143,11 @@ rescue Dalli::RateLimiter::LockError
 end
 
 def add_widgets(some_widgets)
-  if some_widgets.length > lim2.max_requests
+  if some_widgets.length > WIDGETS_LIMIT.max_requests
     halt 400, "Too many widgets!"
   end
 
-  if time = lim2.exceeded?(nil, some_widgets.length) # global limit on adding widgets
+  if time = WIDGETS_LIMIT.exceeded?(nil, some_widgets.length) # global limit on adding widgets
     halt 422, "Sorry! Unable to process request. " \
       "Please wait at least #{time} seconds before trying again."
   end
@@ -169,11 +167,11 @@ from above:
 
 ```ruby
 def add_widgets(some_widgets)
-  if some_widgets.length > lim2.max_requests
+  if some_widgets.length > WIDGETS_LIMIT.max_requests
     halt 400, "Too many widgets!"
   end
 
-  lim2.without_exceeding(nil, some_widgets.length, :wait_timeout => 30) do
+  WIDGETS_LIMIT.without_exceeding(nil, some_widgets.length, :wait_timeout => 30) do
     # Add widgets...
   end
 rescue Dalli::RateLimiter::LimitError
@@ -216,7 +214,13 @@ and the first argument to `#without_exceeding` (or `#exceeded?`) are both
 tested with frozen string literals under Ruby 2.3.0. It has also been tested
 under Rubinius 2.15 and 3.14, and JRuby 1.7 (in 1.9.3 execution mode) and 9K.
 
-You might consider installing the [kgio][7] gem to [give Dalli a 10-20%
+If you are sharing a **Dalli::RateLimiter** instance between multiple threads
+and performance is a concern, you might consider adding the
+[connection_pool][5] gem to your project and passing in a ConnectionPool
+instance (wrapping Dalli::Client) as the first argument to the constructor.
+Make sure your pool has enough slots (`:size`) for these operations; I aim for
+one slot per thread plus one or two for overhead in my applications. You might
+also consider adding the [kgio][7] gem to your project to [give Dalli a 10-20%
 performance boost][8].
 
 ## Caveats
@@ -245,9 +249,6 @@ the near future and will update these results at that time.
 As noted above, this is not a replacement for an application-level rate limit,
 and if your application faces the web, you should probably definitely have
 something else in your stack to handle e.g. a casual DoS.
-
-Make sure your ConnectionPool has enough slots for these operations. I aim for
-one slot per thread plus one or two for overhead in my applications.
 
 ## Documentation
 

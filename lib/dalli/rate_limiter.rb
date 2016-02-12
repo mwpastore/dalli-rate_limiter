@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 require "dalli"
-require "connection_pool"
-
 require "dalli/rate_limiter/version"
 
 module Dalli
@@ -42,7 +40,7 @@ module Dalli
     # @option options [Integer, Float] :lock_timeout (30) maximum number of
     #    seconds to wait for the lock to become available
     def initialize(dalli = nil, options = {})
-      @pool = dalli || ConnectionPool.new { Dalli::Client.new }
+      @pool = dalli || Dalli::Client.new
 
       options = normalize_options options
 
