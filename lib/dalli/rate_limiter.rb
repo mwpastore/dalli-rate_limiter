@@ -179,7 +179,7 @@ module Dalli
       normalized_options[:lock_timeout] = options[:lock_timeout].to_f \
         if options[:lock_timeout] && options[:lock_timeout].to_f >= 0
 
-      DEFAULT_OPTIONS.dup.merge! normalized_options
+      DEFAULT_OPTIONS.merge normalized_options
     end
   end
 end
