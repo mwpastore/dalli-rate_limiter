@@ -79,7 +79,7 @@ module Dalli
 
       try = 1
       total_time = 0
-      loop do
+      while true
         @pool.with do |dc|
           result = dc.cas(key, @period) do |previous_value|
             wait, value = compute(previous_value, to_consume)
