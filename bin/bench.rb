@@ -6,26 +6,36 @@ require "dalli/rate_limiter"
 require "thread"
 require "thwait"
 
-NUM_THREADS = 100
+class Bench
+  NUM_THREADS = 100
 
-lim = Dalli::RateLimiter.new nil,
-  :key_prefix => "bench", :max_requests => 100_000, :period => 1
+  def initialize(dalli = nil)
+    @mutex = Mutex.new
+    @limit = Dalli::RateLimiter.new dalli,
+      :key_prefix => "bench", :max_requests => 100_000, :period => 1
+  end
 
-mutex = Mutex.new
-error_count = 0
+  def bench
+    error_count = 0
 
-threads = NUM_THREADS.times.map do
-  Thread.new do
-    1_000.times do
-      begin
-        lim.exceeded?
-      rescue
-        mutex.synchronize { error_count += 1 }
+    threads = NUM_THREADS.times.map do
+      Thread.new do
+        1_000.times do
+          begin
+            @limit.exceeded?
+          rescue
+            @mutex.synchronize { error_count += 1 }
+          end
+        end
       end
     end
+
+    ThreadsWait.all_waits(*threads)
+
+    puts "errors: #{error_count}"
   end
 end
 
-ThreadsWait.all_waits(*threads)
-
-puts "errors: #{error_count}"
+if $0 == __FILE__
+  Bench.new.bench
+end

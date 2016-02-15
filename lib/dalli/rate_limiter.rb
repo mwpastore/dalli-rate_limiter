@@ -81,16 +81,10 @@ module Dalli
       total_time = 0
       while true
         @pool.with do |dc|
-          result = dc.cas(key, @period) do |previous_value|
+          result = dc.cas!(key, @period) do |previous_value|
             wait, value = compute(previous_value, to_consume)
             return wait if wait > 0 # caller must wait
             value
-          end
-
-          # TODO: We can get rid of this block when Dalli::Client supports #cas!
-          if result.nil?
-            _, value = compute(nil, to_consume)
-            result = dc.add(key, value, @period)
           end
 
           return false if result # caller can proceed
