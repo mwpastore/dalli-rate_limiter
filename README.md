@@ -1,4 +1,8 @@
-# Dalli::RateLimiter [![Build Status](https://travis-ci.org/mwpastore/dalli-rate_limiter.svg?branch=master)](https://travis-ci.org/mwpastore/dalli-rate_limiter) [![Gem Version](https://badge.fury.io/rb/dalli-rate_limiter.svg)](https://badge.fury.io/rb/dalli-rate_limiter)[![Dependency Status](https://gemnasium.com/mwpastore/dalli-rate_limiter.svg)](https://gemnasium.com/mwpastore/dalli-rate_limiter)
+# Dalli::RateLimiter
+
+[![Build Status](https://travis-ci.org/mwpastore/dalli-rate_limiter.svg?branch=master)](https://travis-ci.org/mwpastore/dalli-rate_limiter)
+[![Gem Version](https://badge.fury.io/rb/dalli-rate_limiter.svg)](https://badge.fury.io/rb/dalli-rate_limiter)
+[![Dependency Status](https://gemnasium.com/mwpastore/dalli-rate_limiter.svg)](https://gemnasium.com/mwpastore/dalli-rate_limiter)
 
 **Dalli::RateLimiter** provides arbitrary [Memcached][6]-backed rate limiting
 for your Ruby applications. You may be using an application-level rate limiter
