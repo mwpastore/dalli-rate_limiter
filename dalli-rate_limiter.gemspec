@@ -27,7 +27,7 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency "connection_pool", "~> 2.2.0"
   #spec.add_development_dependency "kgio", "~> 2.10.0"
   spec.add_development_dependency "rake", "~> 10.5.0"
-  spec.add_development_dependency "rubocop", "~> 0.35.0"
+  spec.add_development_dependency "rubocop", "~> 0.37.0"
   spec.add_development_dependency "rspec", "~> 3.4.0"
   spec.add_development_dependency "rspec-given", "~> 3.8.0"
 end

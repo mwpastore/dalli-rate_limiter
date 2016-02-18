@@ -18,7 +18,7 @@ class Bench
   def bench
     error_count = 0
 
-    threads = NUM_THREADS.times.map do
+    threads = Array.new(NUM_THREADS) do
       Thread.new do
         1_000.times do
           begin
