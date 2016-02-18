@@ -1,5 +1,7 @@
 # Dalli::RateLimiter
 
+[![Join the chat at https://gitter.im/mwpastore/dalli-rate_limiter](https://badges.gitter.im/mwpastore/dalli-rate_limiter.svg)](https://gitter.im/mwpastore/dalli-rate_limiter?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+
 [![Build Status](https://travis-ci.org/mwpastore/dalli-rate_limiter.svg?branch=master)](https://travis-ci.org/mwpastore/dalli-rate_limiter)
 [![Gem Version](https://badge.fury.io/rb/dalli-rate_limiter.svg)](https://badge.fury.io/rb/dalli-rate_limiter)
 [![Dependency Status](https://gemnasium.com/mwpastore/dalli-rate_limiter.svg)](https://gemnasium.com/mwpastore/dalli-rate_limiter)
