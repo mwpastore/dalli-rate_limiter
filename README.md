@@ -126,9 +126,9 @@ the lock.
 ```ruby
 require "connection_pool"
 
-dalli = ConnectionPool.new(:size => 5, :timeout => 3) {
-  Dalli::Client.new nil, :namespace => "myapp"
-}
+dalli = ConnectionPool.new(:size => 5, :timeout => 3) do
+  Dalli::Client.new nil, :namespace => "myapp", :threadsafe => false
+end
 
 USERNAME_LIMIT = Dalli::RateLimiter.new dalli,
   :key_prefix => "username-limit", :max_requests => 2, :period => 3_600
