@@ -47,4 +47,33 @@ describe Dalli::RateLimiter do
 
     Then { result == 2 }
   end
+
+  context "with would_exceed?" do
+    context "with no previous attempts" do
+      When(:result) { lim.would_exceed? "test_key_7" }
+
+      Then { !result }
+    end
+
+    context "after too many attempts" do
+      When(:result) {
+        5.times { lim.exceeded? "test_key_8" }
+        lim.would_exceed? "test_key_8"
+      }
+
+      Then { result && result > 0 }
+    end
+
+    context "with almost too many requests" do
+      When(:result) { lim.would_exceed? "test_key_9", lim.max_requests }
+
+      Then { !result }
+    end
+
+    context "with too many requests" do
+      When(:result) { lim.would_exceed? "test_key_10", lim.max_requests + 1 }
+
+      Then { result == -1 }
+    end
+  end
 end

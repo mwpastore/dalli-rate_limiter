@@ -100,6 +100,48 @@ module Dalli
       end
     end
 
+    # Determine whether processing a given request would exceed the rate limit
+    # without actually consuming the quota.
+    #
+    # This is an alternative to `exceeded?` for use cases where you need to
+    # know whether quota is still available without actually consuming it.
+    # Note that even if this method returns `false` indicating that quota
+    # is still available, subsequent calls to `exceeded?` to try to consume
+    # the quota may still return different results as in the time between
+    # the calls to `would_exceed?` and `exceeded?` another thread/worker/server
+    # may have consumed the available quota.
+    #
+    # @param unique_key [String, #to_s] a key to use, in combination with the
+    #   optional `:key_prefix` and any `:namespace` defined in the
+    #   Dalli::Client, to distinguish the item being limited from similar items
+    # @param to_consume [Integer, Float] the number of requests to consume from
+    #   the allowance (used to represent a partial request or a batch of
+    #   requests)
+    #
+    # @return [false] if the request can be processed as given without
+    #   exceeding the limit (including the case where the number to consume is
+    #   zero)
+    # @return [Float] if processing the request as given would exceed
+    #   the limit and the caller should wait so many (fractional) seconds
+    #   before retrying
+    # @return [-1] if the number to consume exceeds the maximum, and the
+    #   request as given would never not exceed the limit
+    def would_exceed?(unique_key = nil, to_consume = 1)
+      to_consume = to_consume.to_f
+
+      return false if to_consume <= 0
+      return -1 if to_consume > max_requests
+
+      key = [@key_prefix, unique_key].compact.join(":")
+
+      @pool.with do |dc|
+        previous_value = dc.get(key, @period)
+        wait, value = compute(previous_value, to_consume)
+        return wait if wait > 0 # caller must wait
+        return false
+      end
+    end
+
     # Execute a block without exceeding the rate limit.
     #
     # @param (see #exceeded?)
